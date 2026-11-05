@@ -76,7 +76,7 @@ def evaluate(cards):
     return (0,) + tuple(sorted(ranks, reverse=True)[:5])
 
 
-def equity(hole, board, samples, deadline):
+def equity(hole, board, samples, deadline, k=1):
     """Share of pots we win (ties count half) against a random hand."""
     known = set(hole) | set(board)
     deck = [c for c in FULL_DECK if c not in known]
@@ -86,6 +86,16 @@ def equity(hole, board, samples, deadline):
     for _ in range(samples):
         draw = random.sample(deck, 2 + need_board)
         opp = draw[:2]
+        if k > 1 and board:
+            # a bettor's range is stronger: keep the best of k random hands
+            used = set(draw[2:])
+            best = evaluate(opp + list(board))
+            for _ in range(k - 1):
+                pool = [c for c in deck if c not in used]
+                cand = random.sample(pool, 2)
+                sc = evaluate(cand + list(board))
+                if sc > best:
+                    best, opp = sc, cand
         full = list(board) + draw[2:]
         mine = evaluate(list(hole) + full)
         theirs = evaluate(opp + full)
@@ -106,10 +116,12 @@ class OwlBot(PokerBot):
         start = time.perf_counter()
         hole = [c[0].upper() + c[1].lower() for c in game_state.hole_cards]
         board = [c[0].upper() + c[1].lower() for c in game_state.community_cards]
-        eq = equity(hole, board, self.SAMPLES, start + 0.35)
-
         to_call = game_state.call_amount
         pot = game_state.pot_size
+        k = 1
+        if board and to_call > 0:
+            k = 2 if to_call / (pot + to_call) < 0.3 else 3
+        eq = equity(hole, board, self.SAMPLES, start + 0.35, k)
         can_raise = game_state.can_raise or game_state.can_bet
         preflop = not board
 
@@ -125,7 +137,7 @@ class OwlBot(PokerBot):
 
         # Facing a bet: price, plus a margin that grows with the bet size.
         price = to_call / (pot + to_call)
-        margin = 0.05 + 0.15 * min(1.0, price * 2)
+        margin = 0.03 + 0.07 * min(1.0, price * 2) if k > 1 else 0.05 + 0.15 * min(1.0, price * 2)
         if preflop and to_call <= (game_state.big_blind or 20):
             margin = 0.02  # blind-level price: defend widely
 
